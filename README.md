@@ -1,6 +1,6 @@
-# 🛰️ **SpecTralNi30** – Geospatial Remote Sensing Analytics Engine
+# 🛰️ **PhytoLens** – Geospatial Remote Sensing Analytics Engine
 
-**SpecTralNi30** is a production-grade remote sensing web application built with a **React (Vite) Frontend** and a **Python FastAPI Backend** leveraging the **Microsoft Planetary Computer (MPC)** STAC API for dynamic satellite data extraction. It enables researchers, GIS engineers, and environmental scientists to process, analyze, and export multi-sensor earth observation data through a premium dark-themed scientific HUD dashboard.
+**PhytoLens** is a production-grade remote sensing web application built with a **React (Vite) Frontend** and a **Python FastAPI Backend** leveraging the **Microsoft Planetary Computer (MPC)** STAC API for dynamic satellite data extraction. It enables researchers, GIS engineers, and environmental scientists to process, analyze, and export multi-sensor earth observation data through a premium dark-themed scientific HUD dashboard.
 
 ---
 
@@ -68,7 +68,7 @@ python backend/verify.py
 ## 📂 **Project Structure**
 
 ```
-SpecTralNi30/
+PhytoLens/
 ├── backend/
 │   ├── app.py             # FastAPI main routes
 │   ├── pc_handler.py      # STAC query, band extraction, and index calculation

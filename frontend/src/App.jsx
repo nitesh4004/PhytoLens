@@ -269,7 +269,7 @@ function TimeSeriesChart({ data, indexName, onViewScene, activeSceneId }) {
     const encodedUri = encodeURI(csvContent);
     const link = document.createElement("a");
     link.setAttribute("href", encodedUri);
-    link.setAttribute("download", `SpecTralNi30_TimeSeries_${indexName}.csv`);
+    link.setAttribute("download", `PhytoLens_TimeSeries_${indexName}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -1512,7 +1512,7 @@ function App() {
       {/* HUD HEADER */}
       <header className="hud-header">
         <div className="hud-title">
-          <img src="/logo.png" alt="SpecTralNi30 Logo" className="hud-logo-img" />
+          <img src="/logo.png" alt="PhytoLens Logo" className="hud-logo-img" />
         </div>
 
         {/* Global Map Controls */}

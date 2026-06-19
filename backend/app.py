@@ -25,7 +25,7 @@ from backend.pc_handler import (
     compute_lulc_stats
 )
 
-app = FastAPI(title="SpecTralNi30 API", description="Microsoft Planetary Computer Remote Sensing Analytics Engine")
+app = FastAPI(title="PhytoLens API", description="Microsoft Planetary Computer Remote Sensing Analytics Engine")
 
 # CORS middleware to allow React app requests
 app.add_middleware(

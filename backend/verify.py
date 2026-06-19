@@ -13,7 +13,7 @@ from backend.pc_handler import (
 )
 
 def test_verify():
-    print("🛰️ Starting Automated Verification of SpecTralNi30 MPC Backend...")
+    print("🛰️ Starting Automated Verification of PhytoLens MPC Backend...")
     
     # ROI: Centered around a small region in Central India (Wardha/Nagpur area)
     bbox = [78.90, 20.50, 79.05, 20.65]
