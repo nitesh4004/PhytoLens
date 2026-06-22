@@ -18,7 +18,8 @@ import {
   Eye,
   PenTool,
   X,
-  MapPin
+  MapPin,
+  Cpu
 } from 'lucide-react';
 
 const get_color_palette = (name) => {
@@ -662,19 +663,16 @@ function TimeSeriesChart({ data, indexName, onViewScene, activeSceneId }) {
                   onMouseEnter={() => setHoveredPoint({ ...d, idx })}
                   onMouseLeave={() => setHoveredPoint(null)}
                 >
-                  <td className="font-bold text-slate-800" style={{ color: isActiveScene ? '#1f4e78' : '#333333' }}>
-                    {isActiveScene ? `★ ${d.date}` : d.date}
-                  </td>
-                  <td style={{ color: '#4472c4', fontWeight: 'bold' }}>{d.mean.toFixed(4)}</td>
-                  <td style={{ color: '#595959', fontSize: '9px' }}>[{d.min.toFixed(2)}, {d.max.toFixed(2)}]</td>
-                  <td style={cloudStyle}>{d.cloud_cover.toFixed(0)}%</td>
-                  <td style={{ textAlign: 'center' }}>
-                    <button
-                      onClick={() => onViewScene && onViewScene(d.scene_id, d.date)}
-                      className="excel-table-btn"
-                      title="Load raster map overlay for this date"
+                  <td className="text-[10px] font-medium text-slate-600">{d.date}</td>
+                  <td className="text-[10px] font-bold text-blue-700">{d.mean.toFixed(2)}</td>
+                  <td className="text-[10px] text-slate-500">{d.min.toFixed(0)} / {d.max.toFixed(0)}</td>
+                  <td className="text-[10px]" style={cloudStyle}>{d.cloud_cover.toFixed(0)}%</td>
+                  <td className="text-center">
+                    <button 
+                      onClick={() => handleSceneToggle(d.scene_id)}
+                      className={`text-[10px] px-2 py-0.5 rounded border ${isActiveScene ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-slate-600 border-slate-300'}`}
                     >
-                      <Eye size={10} style={{ display: 'block' }} />
+                      {isActiveScene ? 'Hide' : 'Show'}
                     </button>
                   </td>
                 </tr>
@@ -706,6 +704,7 @@ function App() {
   const [drawVertices, setDrawVertices] = useState([]);
   const drawVerticesRef = useRef([]);
   const drawLineRef = useRef(null);
+  const firstVertexMarkerRef = useRef(null); // Ref to closing circle marker
 
   // Satellite search state
   const [platform, setPlatform] = useState("Sentinel-2 (Optical)");
@@ -743,6 +742,22 @@ function App() {
   const [lulcYear, setLulcYear] = useState(2021);
   const [lulcResult, setLulcResult] = useState(null);
   const [lulcLoading, setLulcLoading] = useState(false);
+
+  // AEF AI Clustering States
+  const [aefYear, setAefYear] = useState(2024);
+  const [aefClusters, setAefClusters] = useState(5);
+  const [aefResult, setAefResult] = useState(null);
+  const [aefLoading, setAefLoading] = useState(false);
+  const [customClusterNames, setCustomClusterNames] = useState({});
+
+  // AEF AI Similarity States
+  const [queryGeometry, setQueryGeometry] = useState(null);
+  const [queryFileName, setQueryFileName] = useState("");
+  const [drawingTarget, setDrawingTarget] = useState("roi"); // "roi" | "query"
+  const [aefSimMode, setAefSimMode] = useState("centered"); // "centered" | "dotproduct"
+  const [aefThreshold, setAefThreshold] = useState(0.5);
+  const [similarityResult, setSimilarityResult] = useState(null);
+  const [similarityLoading, setSimilarityLoading] = useState(false);
 
   // Dynamic Overlay Resize states
   const [resultsWidth, setResultsWidth] = useState(320);
@@ -797,6 +812,7 @@ function App() {
   const imageOverlayRef = useRef(null);
   const baseTilesRef = useRef(null);
   const geoJsonLayerRef = useRef(null);
+  const queryLayerRef = useRef(null);
 
   // Sync drawVertices state with ref
   useEffect(() => {
@@ -831,20 +847,52 @@ function App() {
       drawLineRef.current = null;
     }
 
+    const drawColor = drawingTarget === "query" ? '#f59e0b' : '#dc2626';
+    const drawFill = drawingTarget === "query" ? 'rgba(245,158,11,0.1)' : 'rgba(220,38,38,0.1)';
+
     if (vertices.length > 0) {
       if (vertices.length >= 3 && !isPreview) {
         drawLineRef.current = L.polygon(vertices, {
-          color: '#dc2626',
+          color: drawColor,
           weight: 2.5,
-          fillColor: 'rgba(220,38,38,0.1)',
+          fillColor: drawFill,
           dashArray: null
         }).addTo(map);
       } else {
         drawLineRef.current = L.polyline(vertices, {
-          color: '#dc2626',
+          color: drawColor,
           weight: 2,
           dashArray: '5, 5'
         }).addTo(map);
+      }
+    }
+
+    const actualVertices = isPreview ? vertices.slice(0, -1) : vertices;
+
+    if (actualVertices.length >= 3) {
+      if (!firstVertexMarkerRef.current) {
+        firstVertexMarkerRef.current = L.circleMarker(actualVertices[0], {
+          radius: 8,
+          color: drawColor,
+          fillColor: '#ffffff',
+          fillOpacity: 1,
+          weight: 3,
+          interactive: true
+        })
+        .addTo(map)
+        .bindTooltip("Click to close shape", { permanent: false, direction: 'top' });
+
+        firstVertexMarkerRef.current.on('click', (e) => {
+          L.DomEvent.stopPropagation(e);
+          finishDrawingPolygon();
+        });
+      } else {
+        firstVertexMarkerRef.current.setLatLng(actualVertices[0]);
+      }
+    } else {
+      if (firstVertexMarkerRef.current) {
+        map.removeLayer(firstVertexMarkerRef.current);
+        firstVertexMarkerRef.current = null;
       }
     }
   };
@@ -868,6 +916,34 @@ function App() {
       },
       properties: {}
     };
+
+    if (drawingTarget === "query") {
+      let newGeojson;
+      if (queryGeometry && queryGeometry.type === "FeatureCollection") {
+        newGeojson = {
+          ...queryGeometry,
+          features: [...queryGeometry.features, geojson]
+        };
+      } else if (queryGeometry) {
+        const existingFeature = queryGeometry.type === "Feature" ? queryGeometry : {
+          type: "Feature",
+          geometry: queryGeometry,
+          properties: {}
+        };
+        newGeojson = {
+          type: "FeatureCollection",
+          features: [existingFeature, geojson]
+        };
+      } else {
+        newGeojson = geojson;
+      }
+      setQueryGeometry(newGeojson);
+      const count = newGeojson.type === "FeatureCollection" ? newGeojson.features.length : 1;
+      setQueryFileName(`${count} Drawn Query Feature${count > 1 ? 's' : ''}`);
+      stopDrawMode();
+      showToast("Query feature drawn successfully");
+      return;
+    }
 
     // Compute bounding box
     const lons = vertices.map(v => v[1]);
@@ -894,17 +970,20 @@ function App() {
   };
 
   // Enable/disable draw mode on the map
-  const startDrawMode = () => {
+  const startDrawMode = (target = "roi") => {
     setIsDrawing(true);
-    setRoiMethod("draw");
+    setDrawingTarget(target);
+    if (target === "roi") {
+      setRoiMethod("draw");
+      setUploadedGeoJson(null);
+      setUploadedFileName("");
+    }
     setDrawVertices([]);
-    setUploadedGeoJson(null);
-    setUploadedFileName("");
     if (mapRef.current) {
       mapRef.current.getContainer().style.cursor = 'crosshair';
       mapRef.current.doubleClickZoom.disable();
     }
-    showToast("Click on map to add vertices. Double-click or click Finish to complete.");
+    showToast(`Click on map to draw ${target === "roi" ? "ROI" : "Query Feature"} vertices. Click the first point to close.`);
   };
 
   const stopDrawMode = () => {
@@ -918,6 +997,10 @@ function App() {
       mapRef.current.removeLayer(drawLineRef.current);
       drawLineRef.current = null;
     }
+    if (firstVertexMarkerRef.current && mapRef.current) {
+      mapRef.current.removeLayer(firstVertexMarkerRef.current);
+      firstVertexMarkerRef.current = null;
+    }
   };
 
   // Map draw interaction handlers
@@ -927,6 +1010,19 @@ function App() {
 
     const onClick = (e) => {
       if (!isDrawing) return;
+
+      // Close polygon if clicking near first vertex
+      if (drawVerticesRef.current.length >= 3) {
+        const firstLatLng = L.latLng(drawVerticesRef.current[0]);
+        const p1 = map.latLngToLayerPoint(firstLatLng);
+        const p2 = map.latLngToLayerPoint(e.latlng);
+        const pixelDistance = p1.distanceTo(p2);
+        if (pixelDistance < 15) {
+          finishDrawingPolygon();
+          return;
+        }
+      }
+
       const newVertex = [e.latlng.lat, e.latlng.lng];
       const next = [...drawVerticesRef.current, newVertex];
       setDrawVertices(next);
@@ -954,7 +1050,7 @@ function App() {
       map.off('mousemove', onMouseMove);
       map.off('dblclick', onDblClick);
     };
-  }, [isDrawing]);
+  }, [isDrawing, drawingTarget]);
 
   // Leaflet Map Setup
   useEffect(() => {
@@ -1032,6 +1128,28 @@ function App() {
       }
     }
   }, [minLon, minLat, maxLon, maxLat, roiMethod, uploadedGeoJson]);
+
+  // Sync Query Geometry layer on change
+  useEffect(() => {
+    if (mapRef.current) {
+      const map = mapRef.current;
+      if (queryLayerRef.current) {
+        map.removeLayer(queryLayerRef.current);
+        queryLayerRef.current = null;
+      }
+      if (queryGeometry) {
+        const layer = L.geoJSON(queryGeometry, {
+          style: {
+            color: "#f59e0b", // Amber/Orange
+            weight: 2.5,
+            fillColor: "rgba(245, 158, 11, 0.15)",
+            dashArray: null
+          }
+        }).addTo(map);
+        queryLayerRef.current = layer;
+      }
+    }
+  }, [queryGeometry]);
 
   // Sync raster overlay opacity when slider changes
   useEffect(() => {
@@ -1131,6 +1249,37 @@ function App() {
     reader.readAsText(file);
   };
 
+  // Query feature KML/GeoJSON upload handler (AI Similarity search).
+  // Unlike the ROI upload this does NOT touch the bounding box — the query
+  // feature is a small reference area that lives inside the Target ROI.
+  const handleQueryFileUpload = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const text = event.target.result;
+      let parseResult = null;
+
+      if (file.name.endsWith(".kml")) {
+        parseResult = parseKmlText(text);
+      } else if (file.name.endsWith(".geojson") || file.name.endsWith(".json")) {
+        parseResult = parseGeoJsonText(text);
+      }
+
+      if (parseResult && parseResult.geojson) {
+        setQueryGeometry(parseResult.geojson);
+        setQueryFileName(file.name);
+        showToast(`Query feature loaded from ${file.name}`);
+      } else {
+        showToast("No valid polygon coordinate vectors found in file.", true);
+      }
+    };
+    reader.readAsText(file);
+    // Reset so re-selecting the same file fires onChange again
+    e.target.value = "";
+  };
+
   // Sync selected scene metadata for footer HUD display
   useEffect(() => {
     if (selectedSceneId && scenes.length > 0) {
@@ -1214,6 +1363,11 @@ function App() {
     setSpectralResult(null);
     setTimeSeriesResult(null);
     setLulcResult(null);
+    setAefResult(null);
+    setSimilarityResult(null);
+    setQueryGeometry(null);
+    setQueryFileName("");
+    setCustomClusterNames({});
   };
 
   const renderRasterOverlay = (relativeUrl, bbox) => {
@@ -1437,6 +1591,101 @@ function App() {
     }
   };
 
+  // AEF AI Clustering calculation
+  const runAefClustering = async () => {
+    setAefLoading(true);
+    setLoading(true);
+    setLoadingText(`Running AI Clustering using AlphaEarth Embeddings for ${aefYear}...`);
+    setAefResult(null);
+    setCustomClusterNames({});
+
+    try {
+      const payload = {
+        bbox: [minLon, minLat, maxLon, maxLat],
+        year: aefYear,
+        num_clusters: aefClusters,
+        geometry: uploadedGeoJson
+      };
+
+      const res = await fetch(`${API_BASE}/api/aef/cluster`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.detail || "AI Clustering failed");
+      }
+
+      const data = await res.json();
+      setAefResult(data);
+      setResultsPanelOpen(true);
+
+      // Render the colorized classification on the map
+      renderRasterOverlay(data.image_url, [minLon, minLat, maxLon, maxLat]);
+      showToast(`AI Clustering completed with ${aefClusters} classes`);
+    } catch (e) {
+      showToast(e.message, true);
+    } finally {
+      setAefLoading(false);
+      setLoading(false);
+    }
+  };
+
+  // AEF AI Similarity calculation
+  const runAefSimilarity = async () => {
+    if (!uploadedGeoJson) {
+      showToast("Draw or select a Target ROI first.", true);
+      return;
+    }
+    if (!queryGeometry) {
+      showToast("Please draw a Query Feature polygon inside the ROI first.", true);
+      return;
+    }
+
+    setSimilarityLoading(true);
+    setLoading(true);
+    setLoadingText(`Calculating AI Similarity using AlphaEarth Embeddings for ${aefYear}...`);
+    setSimilarityResult(null);
+
+    try {
+      const payload = {
+        bbox: [minLon, minLat, maxLon, maxLat],
+        year: aefYear,
+        query_geometry: queryGeometry,
+        threshold: aefThreshold,
+        mode: aefSimMode,
+        geometry: uploadedGeoJson,
+        palette: colorPalette
+      };
+
+      const res = await fetch(`${API_BASE}/api/aef/similarity`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.detail || "AI Similarity calculation failed");
+      }
+
+      const data = await res.json();
+      setSimilarityResult(data);
+      setResultsPanelOpen(true);
+
+      // Render the colorized similarity map on the map
+      renderRasterOverlay(data.image_url, [minLon, minLat, maxLon, maxLat]);
+      showToast(`AI Similarity Search completed successfully`);
+    } catch (e) {
+      showToast(e.message, true);
+    } finally {
+      setSimilarityLoading(false);
+      setLoading(false);
+    }
+  };
+
   // Reset overlays on tab switch
   useEffect(() => {
     clearMapOverlay();
@@ -1467,7 +1716,11 @@ function App() {
     return `linear-gradient(90deg, ${list.join(', ')})`;
   };
 
-  const activeTiffUrl = spectralResult ? spectralResult.geotiff_url : null;
+  const activeTiffUrl = 
+    analysisMode === "aef" && aefResult ? aefResult.geotiff_url :
+    analysisMode === "lulc" && lulcResult ? lulcResult.geotiff_url :
+    analysisMode === "similarity" && similarityResult ? similarityResult.geotiff_url :
+    spectralResult ? spectralResult.geotiff_url : null;
 
   return (
     <div className="app-viewport">
@@ -1580,28 +1833,22 @@ function App() {
               <Layers className="icon" />
               <h2>ANALYSIS MODE</h2>
             </div>
-            <div className="card-body radio-group">
-              <button 
-                onClick={() => { setAnalysisMode("single"); handleClearAll(); }} 
-                className={`radio-button ${analysisMode === "single" ? "active" : ""}`}
-              >
-                <span>Single Scene Scan</span>
-                <Eye size={13} />
-              </button>
-              <button 
-                onClick={() => { setAnalysisMode("timeseries"); handleClearAll(); }} 
-                className={`radio-button ${analysisMode === "timeseries" ? "active" : ""}`}
-              >
-                <span>Seasonal Trend</span>
-                <Activity size={13} />
-              </button>
-              <button 
-                onClick={() => { setAnalysisMode("lulc"); handleClearAll(); }} 
-                className={`radio-button ${analysisMode === "lulc" ? "active" : ""}`}
-              >
-                <span>LULC Mapping</span>
-                <MapPin size={13} />
-              </button>
+            <div className="card-body">
+              <div className="custom-select">
+                <select 
+                  value={analysisMode} 
+                  onChange={e => {
+                    setAnalysisMode(e.target.value);
+                    handleClearAll();
+                  }}
+                >
+                  <option value="single">Single Scene Scan</option>
+                  <option value="timeseries">Seasonal Trend</option>
+                  <option value="lulc">LULC Mapping</option>
+                  <option value="aef">AI Clustering (AEF)</option>
+                  <option value="similarity">AI Similarity (AEF)</option>
+                </select>
+              </div>
             </div>
           </div>
 
@@ -1671,8 +1918,8 @@ function App() {
             </div>
           </div>
 
-          {/* CARD 3: SATELLITE SCENE TIMELINE — hidden in LULC mode */}
-          {analysisMode !== "lulc" && (
+          {/* CARD 3: SATELLITE SCENE TIMELINE — hidden in LULC/AEF/Similarity mode */}
+          {(analysisMode !== "lulc" && analysisMode !== "aef" && analysisMode !== "similarity") && (
           <div className="sidebar-card">
             <div className="card-header">
               <Calendar className="icon" />
@@ -1830,8 +2077,197 @@ function App() {
           </div>
           )}
 
-          {/* CARD 4: ANALYTICS PARAMETERS — hidden in LULC mode */}
-          {analysisMode !== "lulc" && (
+          {/* CARD 3c: AEF CLUSTERING CONFIGURATION — visible only in AEF mode */}
+          {analysisMode === "aef" && (
+          <div className="sidebar-card">
+            <div className="card-header">
+              <Cpu className="icon" />
+              <h2>AI CLUSTERING</h2>
+            </div>
+            <div className="card-body">
+              <div className="form-group">
+                <label>Acquisition Year</label>
+                <div className="custom-select">
+                  <select value={aefYear} onChange={e => setAefYear(parseInt(e.target.value))}>
+                    <option value={2025}>2025 (Embeddings)</option>
+                    <option value={2024}>2024 (Embeddings)</option>
+                    <option value={2023}>2023 (Embeddings)</option>
+                    <option value={2022}>2022 (Embeddings)</option>
+                    <option value={2019}>2019 (Embeddings)</option>
+                    <option value={2018}>2018 (Embeddings)</option>
+                    <option value={2017}>2017 (Embeddings)</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="form-group">
+                <label>Number of Clusters ({aefClusters})</label>
+                <input 
+                  type="range" 
+                  min="2" 
+                  max="10" 
+                  value={aefClusters} 
+                  onChange={e => setAefClusters(parseInt(e.target.value))} 
+                />
+              </div>
+
+              <div className="mt-3 p-2.5 bg-slate-900/40 border border-cyan-500/10 rounded flex flex-col gap-1 text-[10px] text-slate-400">
+                <span className="text-cyan-400 font-bold uppercase tracking-wider">
+                  AlphaEarth Foundations (AEF)
+                </span>
+                <p className="leading-relaxed text-slate-400">
+                  Performs unsupervised K-Means clustering on Google DeepMind's 64-dimensional satellite embeddings sourced from the AWS opendata bucket.
+                </p>
+              </div>
+
+              <button 
+                onClick={runAefClustering} 
+                disabled={aefLoading}
+                className="submit-btn-pill active py-2 text-xs w-full flex justify-center items-center gap-2 mt-3"
+              >
+                <Cpu size={12} className={aefLoading ? "animate-spin" : ""} />
+                {aefLoading ? "Clustering Embeddings..." : "Generate AI Clusters"}
+              </button>
+            </div>
+          </div>
+          )}
+
+          {/* CARD 3d: AI SIMILARITY CONFIGURATION — visible only in similarity mode */}
+          {analysisMode === "similarity" && (
+          <div className="sidebar-card">
+            <div className="card-header">
+              <Cpu className="icon" />
+              <h2>AI SIMILARITY</h2>
+            </div>
+            <div className="card-body">
+              <div className="form-group">
+                <label>Acquisition Year</label>
+                <div className="custom-select">
+                  <select value={aefYear} onChange={e => setAefYear(parseInt(e.target.value))}>
+                    <option value={2025}>2025 (Embeddings)</option>
+                    <option value={2024}>2024 (Embeddings)</option>
+                    <option value={2023}>2023 (Embeddings)</option>
+                    <option value={2022}>2022 (Embeddings)</option>
+                    <option value={2019}>2019 (Embeddings)</option>
+                    <option value={2018}>2018 (Embeddings)</option>
+                    <option value={2017}>2017 (Embeddings)</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Draw Query Feature Button */}
+              <div className="form-group">
+                <label>Query Feature Geometry</label>
+                <div className="flex flex-col gap-2">
+                  <button
+                    onClick={isDrawing ? stopDrawMode : () => startDrawMode("query")}
+                    className={`radio-button w-full justify-center ${drawingTarget === 'query' && isDrawing ? 'active' : ''}`}
+                    style={{ padding: '8px 0', fontSize: '11px', gap: '6px' }}
+                  >
+                    <PenTool size={13} /> {drawingTarget === 'query' && isDrawing ? 'Drawing Feature...' : 'Draw Query Feature'}
+                  </button>
+
+                  <div className="flex items-center gap-2 text-[9px] text-slate-600 uppercase tracking-wider">
+                    <div className="flex-1 h-px bg-slate-700/60" /> or <div className="flex-1 h-px bg-slate-700/60" />
+                  </div>
+
+                  <div className="file-upload-box" style={{ padding: '8px' }}>
+                    <input type="file" accept=".kml,.geojson,.json" onChange={handleQueryFileUpload} className="file-upload-input" />
+                    <Upload size={14} className="text-amber-400 mb-1" />
+                    <span className="file-upload-text">Upload Query Feature</span>
+                    <span className="file-upload-subtext">Supports .kml, .geojson, .json</span>
+                  </div>
+
+                  {queryFileName ? (
+                    <div className="flex items-center gap-2 text-[10px] text-slate-400 p-1.5 bg-slate-900/40 rounded border border-amber-500/20">
+                      <FileCheck size={12} className="text-amber-500" />
+                      <span className="text-white font-bold truncate">{queryFileName}</span>
+                      <button
+                        onClick={() => { setQueryGeometry(null); setQueryFileName(""); }}
+                        style={{ marginLeft: 'auto', background: 'none', border: 'none', cursor: 'pointer', color: '#ef4444' }}
+                      >
+                        <X size={12} />
+                      </button>
+                    </div>
+                  ) : (
+                    <span className="text-[9px] text-slate-500">No query feature yet. Draw or upload a small area inside the ROI.</span>
+                  )}
+                </div>
+              </div>
+
+              <div className="form-group">
+                <label>Color Palette</label>
+                <div className="custom-select">
+                  <select value={colorPalette} onChange={e => setColorPalette(e.target.value)}>
+                    <option value="Viridis (Sequential)">Viridis (Sequential)</option>
+                    <option value="Magma (Sequential)">Magma (Sequential)</option>
+                    <option value="Plasma (Sequential)">Plasma</option>
+                    <option value="Turbo (Rainbow Enhanced)">Turbo (Rainbow)</option>
+                    <option value="Terrain (Elevation)">Terrain (Elevation)</option>
+                    <option value="Red-Yellow-Green (Vegetation)">Red-Yellow-Green (Veg)</option>
+                    <option value="Blue-White-Green (Water/Veg)">Blue-White-Green (Water)</option>
+                    <option value="Blue-Yellow-Red (Thermal)">Blue-Yellow-Red (Thermal)</option>
+                    <option value="Greyscale">Greyscale</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="form-group">
+                <label>Similarity Mode</label>
+                <div className="custom-select">
+                  <select
+                    value={aefSimMode}
+                    onChange={e => {
+                      const m = e.target.value;
+                      setAefSimMode(m);
+                      // Reset threshold to the mode's sensible default
+                      setAefThreshold(m === "dotproduct" ? 0.9 : 0.5);
+                    }}
+                  >
+                    <option value="centered">Local Contrast (recommended)</option>
+                    <option value="dotproduct">Absolute / Dot-product (Google)</option>
+                  </select>
+                </div>
+                <span className="text-[9px] text-slate-400 mt-1 block">
+                  {aefSimMode === "dotproduct"
+                    ? "Google's raw dot-product. Best for diverse scenes; in uniform terrain distinct features (e.g. water) may rank low."
+                    : "Mean-centered cosine. Removes the component all pixels share so distinct features (water, built-up) are ranked correctly."}
+                </span>
+              </div>
+
+              <div className="form-group">
+                <label>Similarity Threshold ({aefThreshold.toFixed(3)})</label>
+                <input
+                  type="range"
+                  min="0.000"
+                  max="1.000"
+                  step="0.001"
+                  value={aefThreshold}
+                  onChange={e => setAefThreshold(parseFloat(e.target.value))}
+                />
+                <span className="text-[9px] text-slate-400 mt-1 block">
+                  {aefSimMode === "dotproduct"
+                    ? "Dot-product similarity (1 = identical). ~0.90 is Google's default; raise to tighten."
+                    : "Centered similarity (1 = identical, 0 = ROI average). ~0.50 isolates the query feature; raise to tighten."}
+                </span>
+              </div>
+
+
+
+              <button 
+                onClick={runAefSimilarity} 
+                disabled={similarityLoading}
+                className="submit-btn-pill active py-2 text-xs w-full flex justify-center items-center gap-2 mt-3"
+              >
+                <Cpu size={12} className={similarityLoading ? "animate-spin" : ""} />
+                {similarityLoading ? "Computing Similarity..." : "Run Similarity Search"}
+              </button>
+            </div>
+          </div>
+          )}
+
+          {/* CARD 4: ANALYTICS PARAMETERS — hidden in LULC/AEF/Similarity mode */}
+          {(analysisMode !== "lulc" && analysisMode !== "aef" && analysisMode !== "similarity") && (
           <div className="sidebar-card">
             <div className="card-header">
               <Sliders className="icon" />
@@ -1940,40 +2376,7 @@ function App() {
 
         {/* CENTRAL MAP WORKSPACE */}
         <section className="workspace">
-          {isDrawing && (
-            <div className="map-hud-tip flex items-center gap-3">
-              <span className="badge-pulse"></span>
-              <span className="text-[11px] font-mono uppercase tracking-wider text-cyan-400">
-                Drawing: {drawVertices.length} points
-              </span>
-              <div style={{ borderLeft: '1px solid var(--border-color)', height: '14px' }}></div>
-              <button 
-                onClick={finishDrawingPolygon}
-                disabled={drawVertices.length < 3}
-                className="pill-btn font-bold text-xs"
-                style={{ padding: '2px 8px', color: drawVertices.length >= 3 ? 'var(--accent-sky)' : 'var(--text-muted)' }}
-              >
-                Finish
-              </button>
-              <button 
-                onClick={() => {
-                  setDrawVertices([]);
-                  updateDrawingLayer([]);
-                }}
-                className="pill-btn font-bold text-xs"
-                style={{ padding: '2px 8px', color: 'var(--text-secondary)' }}
-              >
-                Clear
-              </button>
-              <button 
-                onClick={stopDrawMode}
-                className="pill-btn font-bold text-xs"
-                style={{ padding: '2px 8px', color: 'var(--color-red)' }}
-              >
-                Cancel
-              </button>
-            </div>
-          )}
+
           <div className="map-container">
             <div id="leaflet-map" ref={mapContainerRef}></div>
           </div>
@@ -2030,7 +2433,11 @@ function App() {
           </div>
 
           {/* FLOATING SIDEBAR RIGHT - RESULTS OVERLAY */}
-          {((spectralResult && analysisMode === "single") || (timeSeriesResult && analysisMode === "timeseries") || (lulcResult && analysisMode === "lulc")) && (
+          {((spectralResult && analysisMode === "single") || 
+            (timeSeriesResult && analysisMode === "timeseries") || 
+            (lulcResult && analysisMode === "lulc") || 
+            (aefResult && analysisMode === "aef") || 
+            (similarityResult && analysisMode === "similarity")) && (
             <>
             <button 
               className={`results-toggle-btn ${!resultsPanelOpen ? 'collapsed' : ''}`}
@@ -2276,6 +2683,298 @@ function App() {
                 </div>
                 );
               })()}
+
+              {/* AI CLUSTERING RESULTS */}
+              {aefResult && analysisMode === "aef" && (() => {
+                const statsEntries = Object.entries(aefResult.stats).sort((a, b) => b[1].percentage - a[1].percentage);
+                const totalArea = statsEntries.reduce((sum, [, v]) => sum + v.area_ha, 0);
+
+                // Donut chart calculations
+                const donutSize = 160;
+                const donutR = 58;
+                const donutInnerR = 36;
+                const donutCx = donutSize / 2;
+                const donutCy = donutSize / 2;
+                let donutAngle = -90;
+
+                const donutSegments = statsEntries.map(([classVal, info]) => {
+                  const angleDeg = (info.percentage / 100) * 360;
+                  const startAngle = donutAngle;
+                  donutAngle += angleDeg;
+                  const endAngle = donutAngle;
+
+                  const startRad = (startAngle * Math.PI) / 180;
+                  const endRad = (endAngle * Math.PI) / 180;
+
+                  const x1 = donutCx + donutR * Math.cos(startRad);
+                  const y1 = donutCy + donutR * Math.sin(startRad);
+                  const x2 = donutCx + donutR * Math.cos(endRad);
+                  const y2 = donutCy + donutR * Math.sin(endRad);
+
+                  const ix1 = donutCx + donutInnerR * Math.cos(endRad);
+                  const iy1 = donutCy + donutInnerR * Math.sin(endRad);
+                  const ix2 = donutCx + donutInnerR * Math.cos(startRad);
+                  const iy2 = donutCy + donutInnerR * Math.sin(startRad);
+
+                  const largeArc = angleDeg > 180 ? 1 : 0;
+
+                  const pathD = [
+                    `M ${x1} ${y1}`,
+                    `A ${donutR} ${donutR} 0 ${largeArc} 1 ${x2} ${y2}`,
+                    `L ${ix1} ${iy1}`,
+                    `A ${donutInnerR} ${donutInnerR} 0 ${largeArc} 0 ${ix2} ${iy2}`,
+                    'Z'
+                  ].join(' ');
+
+                  return { classVal, info, pathD };
+                });
+
+                // CSV Export for AEF Cluster
+                const handleAefCsvExport = () => {
+                  let csvContent = "data:text/csv;charset=utf-8,";
+                  csvContent += "Cluster,Custom Label,Pixels,Area_Ha,Percentage\n";
+                  statsEntries.forEach(([classVal, info]) => {
+                    const customLabel = customClusterNames[classVal] || info.name;
+                    csvContent += `"${info.name}","${customLabel.replace(/"/g, '""')}",${info.pixel_count},${info.area_ha},${info.percentage}\n`;
+                  });
+                  const encodedUri = encodeURI(csvContent);
+                  const link = document.createElement("a");
+                  link.setAttribute("href", encodedUri);
+                  link.setAttribute("download", `AEF_Clustering_${aefResult.year}_K${aefResult.num_clusters}.csv`);
+                  document.body.appendChild(link);
+                  link.click();
+                  document.body.removeChild(link);
+                };
+
+                return (
+                <div className="glass-panel p-4 flex flex-col gap-3" style={{ maxHeight: '80vh', overflowY: 'auto' }}>
+                  <div className="results-header">
+                    <span>🤖 AI CLUSTERING — {aefResult.year}</span>
+                    <Cpu size={14} className="text-cyan-400" />
+                  </div>
+
+                  <div className="text-[10px] text-slate-400 flex items-center gap-2">
+                    <span className="text-cyan-400 font-bold uppercase">
+                      AlphaEarth K-Means
+                    </span>
+                    <span>•</span>
+                    <span>{statsEntries.length} clusters</span>
+                    <span>•</span>
+                    <span>{totalArea.toFixed(1)} ha total</span>
+                  </div>
+
+                  {/* Interactive Legend with Rename Inputs */}
+                  <div className="lulc-section-title">Classify / Label Clusters</div>
+                  <div className="flex flex-col gap-2">
+                    {statsEntries.map(([classVal, info]) => {
+                      const currentName = customClusterNames[classVal] || info.name;
+                      return (
+                        <div key={classVal} className="flex items-center gap-2 p-1.5 bg-slate-900/30 rounded border border-slate-800/40">
+                          <span className="lulc-color-swatch-sm flex-shrink-0" style={{ backgroundColor: info.color }}></span>
+                          <input 
+                            type="text" 
+                            value={currentName} 
+                            onChange={e => setCustomClusterNames(prev => ({ ...prev, [classVal]: e.target.value }))}
+                            className="bg-transparent border-b border-transparent hover:border-slate-700 focus:border-cyan-500 text-[11px] text-white font-bold py-0.5 px-1 w-full focus:outline-none"
+                            placeholder={`Rename ${info.name}...`}
+                          />
+                          <span className="text-[10px] font-mono text-cyan-400 flex-shrink-0 ml-auto font-bold">{info.percentage.toFixed(1)}%</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {/* Horizontal Stacked Bar Chart */}
+                  <div className="lulc-section-title">Coverage Distribution</div>
+                  <div className="lulc-bar-chart">
+                    {statsEntries.map(([classVal, info]) => {
+                      const label = customClusterNames[classVal] || info.name;
+                      return (
+                        <div 
+                          key={classVal}
+                          className="lulc-bar-segment"
+                          style={{ 
+                            width: `${Math.max(info.percentage, 0.5)}%`, 
+                            backgroundColor: info.color 
+                          }}
+                          title={`${label}: ${info.percentage.toFixed(1)}%`}
+                        ></div>
+                      );
+                    })}
+                  </div>
+
+                  {/* SVG Donut Chart */}
+                  <div className="lulc-section-title">Class Proportion</div>
+                  <div style={{ display: 'flex', justifyContent: 'center' }}>
+                    <svg width={donutSize} height={donutSize} viewBox={`0 0 ${donutSize} ${donutSize}`}>
+                      {donutSegments.map((seg, idx) => {
+                        const label = customClusterNames[seg.classVal] || seg.info.name;
+                        return (
+                          <path
+                            key={idx}
+                            d={seg.pathD}
+                            fill={seg.info.color}
+                            stroke="#1a1f2e"
+                            strokeWidth="1"
+                            style={{ cursor: 'pointer' }}
+                          >
+                            <title>{label}: {seg.info.percentage.toFixed(1)}%</title>
+                          </path>
+                        );
+                      })}
+                      <text x={donutCx} y={donutCy - 4} textAnchor="middle" fill="#e2e8f0" fontSize="11" fontWeight="700">
+                        {statsEntries.length}
+                      </text>
+                      <text x={donutCx} y={donutCy + 10} textAnchor="middle" fill="#94a3b8" fontSize="8">
+                        Clusters
+                      </text>
+                    </svg>
+                  </div>
+
+                  {/* Statistics Table */}
+                  <div className="lulc-section-title">Area Statistics</div>
+                  <div className="mt-1 overflow-y-auto max-h-[180px] border border-slate-700/60 rounded">
+                    <table className="lulc-stats-table">
+                      <thead>
+                        <tr>
+                          <th></th>
+                          <th>Class</th>
+                          <th>Pixels</th>
+                          <th>Area (ha)</th>
+                          <th>%</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {statsEntries.map(([classVal, info]) => {
+                          const label = customClusterNames[classVal] || info.name;
+                          return (
+                            <tr key={classVal}>
+                              <td><span className="lulc-color-swatch-sm" style={{ backgroundColor: info.color }}></span></td>
+                              <td className="font-bold" style={{ color: info.color }}>{label}</td>
+                              <td>{info.pixel_count.toLocaleString()}</td>
+                              <td>{info.area_ha.toFixed(1)}</td>
+                              <td style={{ fontWeight: 'bold' }}>{info.percentage.toFixed(1)}%</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {/* Export CSV */}
+                  <div className="flex justify-between items-center mt-2 pt-2 border-t border-slate-700/60">
+                    <span className="text-[10px] text-slate-500 font-bold">
+                      Total: {totalArea.toFixed(1)} ha
+                    </span>
+                    <button onClick={handleAefCsvExport} className="excel-btn">
+                      Export CSV
+                    </button>
+                  </div>
+                </div>
+                );
+              })()}
+
+              {/* AI SIMILARITY RESULTS */}
+              {similarityResult && analysisMode === "similarity" && (() => {
+                const stats = similarityResult.stats;
+                const matchArea = stats.match_area_ha;
+                const matchPct = stats.match_percentage;
+
+                const handleSimilarityCsvExport = () => {
+                  let csvContent = "data:text/csv;charset=utf-8,";
+                  csvContent += "Metric,Value\n";
+                  csvContent += `Threshold,${stats.threshold}\n`;
+                  csvContent += `Matching Pixels,${stats.match_pixels}\n`;
+                  csvContent += `Matching Area (ha),${stats.match_area_ha}\n`;
+                  csvContent += `Matching Percentage (%),${stats.match_percentage}%\n`;
+                  csvContent += `Min Similarity,${stats.min.toFixed(4)}\n`;
+                  csvContent += `Max Similarity,${stats.max.toFixed(4)}\n`;
+                  csvContent += `Mean Similarity,${stats.mean.toFixed(4)}\n`;
+                  csvContent += `Std Dev Similarity,${stats.std.toFixed(4)}\n`;
+                  
+                  const encodedUri = encodeURI(csvContent);
+                  const link = document.createElement("a");
+                  link.setAttribute("href", encodedUri);
+                  link.setAttribute("download", `AEF_Similarity_Search_${similarityResult.year}_T${stats.threshold}.csv`);
+                  document.body.appendChild(link);
+                  link.click();
+                  document.body.removeChild(link);
+                };
+
+                return (
+                <div className="glass-panel p-4 flex flex-col gap-3" style={{ maxHeight: '80vh', overflowY: 'auto' }}>
+                  <div className="results-header">
+                    <span>🤖 AI SIMILARITY ANALYSIS</span>
+                    <Cpu size={14} className="text-cyan-400" />
+                  </div>
+
+                  <div className="text-[10px] text-slate-400 flex items-center gap-2">
+                    <span className="text-cyan-400 font-bold uppercase">AlphaEarth Similarity</span>
+                    <span>•</span>
+                    <span>Year: {similarityResult.year}</span>
+                    <span>•</span>
+                    <span>Threshold: {stats.threshold.toFixed(3)}</span>
+                  </div>
+
+                  {/* Matching Statistics Card */}
+                  <div className="p-3 bg-slate-900/50 rounded border border-cyan-500/20 flex flex-col gap-1.5">
+                    <div className="text-[10px] text-cyan-400 font-bold uppercase tracking-wider">Matching Area Coverage</div>
+                    <div className="flex items-baseline gap-2">
+                      <span className="text-2xl font-bold text-white font-mono">{matchArea.toLocaleString()} ha</span>
+                      <span className="text-xs text-slate-400">({matchPct.toFixed(2)}% of ROI)</span>
+                    </div>
+                    {/* Visual bar chart for coverage */}
+                    <div className="w-full bg-slate-800 rounded-full h-1.5 overflow-hidden mt-1">
+                      <div 
+                        className="bg-cyan-500 h-1.5 rounded-full" 
+                        style={{ width: `${matchPct}%` }}
+                      ></div>
+                    </div>
+                  </div>
+
+                  {/* Warning if no matching pixels */}
+                  {stats.match_pixels === 0 && (
+                    <div className="p-2.5 bg-rose-500/10 border border-rose-500/20 rounded flex items-start gap-2 text-rose-400">
+                      <AlertTriangle size={14} className="flex-shrink-0 mt-0.5" />
+                      <span className="text-[10px] leading-normal">
+                        No features matched your query above threshold <strong>{stats.threshold.toFixed(3)}</strong>. Try lowering the threshold slider in the sidebar.
+                      </span>
+                    </div>
+                  )}
+
+                  {/* Cosine Similarity Statistics Grid */}
+                  <div className="lulc-section-title">Similarity Statistics</div>
+                  <div className="stats-grid">
+                    <div className="stat-card">
+                      <div className="stat-label">Mean</div>
+                      <div className="stat-val high">{stats.mean.toFixed(4)}</div>
+                    </div>
+                    <div className="stat-card">
+                      <div className="stat-label">Std Dev</div>
+                      <div className="stat-val">{stats.std.toFixed(4)}</div>
+                    </div>
+                    <div className="stat-card">
+                      <div className="stat-label">Min</div>
+                      <div className="stat-val danger">{stats.min.toFixed(4)}</div>
+                    </div>
+                    <div className="stat-card">
+                      <div className="stat-label">Max</div>
+                      <div className="stat-val success">{stats.max.toFixed(4)}</div>
+                    </div>
+                  </div>
+
+                  {/* Export CSV */}
+                  <div className="flex justify-between items-center mt-3 pt-2 border-t border-slate-700/60">
+                    <span className="text-[10px] text-slate-500 font-bold">
+                      Match: {stats.match_pixels.toLocaleString()} px
+                    </span>
+                    <button onClick={handleSimilarityCsvExport} className="excel-btn">
+                      Export CSV
+                    </button>
+                  </div>
+                </div>
+                );
+              })()}
             </div>
             </>
           )}
@@ -2290,7 +2989,12 @@ function App() {
           </div>
           <div>
             <h3>SENSOR PLATFORM</h3>
-            <p>{selectedSceneMeta ? selectedSceneMeta.sensor : "NO ACTIVE SENSOR"}</p>
+            <p>
+              {analysisMode === "aef" ? "AlphaEarth Foundations" : 
+               analysisMode === "similarity" ? "AlphaEarth Foundations" :
+               analysisMode === "lulc" ? (lulcDataset === "esa-worldcover" ? "ESA WorldCover" : "IO LULC Annual") :
+               selectedSceneMeta ? selectedSceneMeta.sensor : "NO ACTIVE SENSOR"}
+            </p>
           </div>
         </div>
 
@@ -2300,7 +3004,12 @@ function App() {
           </div>
           <div>
             <h3>ACQUISITION DATE</h3>
-            <p>{selectedSceneMeta ? selectedSceneMeta.date : "IDLE / PENDING"}</p>
+            <p>
+              {analysisMode === "aef" ? `${aefYear} (Annual Composite)` :
+               analysisMode === "similarity" ? `${aefYear} (Annual Composite)` :
+               analysisMode === "lulc" ? `${lulcYear} (Annual Classification)` :
+               selectedSceneMeta ? selectedSceneMeta.date : "IDLE / PENDING"}
+            </p>
           </div>
         </div>
 
@@ -2320,6 +3029,19 @@ function App() {
                     <span>{visMin}</span>
                     <span>{((parseFloat(visMin) + parseFloat(visMax)) / 2).toFixed(1)}</span>
                     <span>{visMax}</span>
+                  </div>
+                </div>
+              )}
+              {analysisMode === "similarity" && similarityResult && (
+                <div style={{ display: 'flex', flexDirection: 'column', width: '100%', gap: '2px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '9px', fontWeight: '600', color: 'var(--text-main)' }}>
+                    <span>Cosine Similarity Scale</span>
+                  </div>
+                  <div style={{ height: '8px', width: '100%', borderRadius: '2px', background: getPaletteGradientString() }}></div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontFamily: 'monospace', fontSize: '8px', color: 'var(--text-muted)' }}>
+                    <span>{similarityResult.vis_min.toFixed(2)}</span>
+                    <span>{((similarityResult.vis_min + similarityResult.vis_max) / 2).toFixed(2)}</span>
+                    <span>{similarityResult.vis_max.toFixed(2)}</span>
                   </div>
                 </div>
               )}
