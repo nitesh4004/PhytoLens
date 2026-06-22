@@ -20,6 +20,15 @@ The application is split into two components:
   - Dynamic visual stretching (2nd to 98th percentile contrast stretching).
   - Custom algebraic band math expressions (e.g. `(B8 - B4) / (B8 + B4)`).
 
+- **🤖 AlphaEarth Foundation AI (AEF)**:
+  - **AI Clustering**: Unsupervised segmentation of multi-temporal embeddings into $K$ user-defined clusters to identify crop performance or land cover transitions.
+  - **AI Similarity Search**: Compare user-drawn or uploaded multi-geometry queries against target ROIs using 64-dimensional embeddings (cosine similarity).
+  - **Local Contrast Mode**: Optional mean-centering of embeddings to rank distinct features accurately across varying or uniform terrain.
+
+- **🗺️ Intuitive Polygon Drawing**:
+  - Click-to-close capability by clicking on the starting vertex marker or within a 15-pixel screen-distance tolerance of it.
+  - Immersive full-screen feel with drawing status toasts and zero top-panel HUD clutter.
+
 - **💾 Data Export**:
   - Instant raw GeoTIFF exports.
   - Transparent PNG maps for web-map overlay.
