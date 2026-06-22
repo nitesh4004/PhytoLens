@@ -2232,39 +2232,101 @@ input[type="range"] {
 }
 
 .lulc-stats-table thead tr {
-  background-color: rgba(15, 23, 42, 0.7);
-  border-bottom: 1px solid rgba(100, 116, 139, 0.3);
+  background-color: var(--bg-sidebar);
+  border-bottom: 1px solid var(--border-color);
 }
 
 .lulc-stats-table thead th {
-  padding: 5px 6px;
+  padding: 6px 8px;
   text-align: left;
-  font-size: 10.5px;
+  font-size: 10px;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  color: var(--text-muted, #94a3b8);
+  color: var(--text-muted);
   white-space: nowrap;
 }
 
 .lulc-stats-table tbody tr {
-  border-bottom: 1px solid rgba(100, 116, 139, 0.12);
+  border-bottom: 1px solid rgba(15, 23, 42, 0.06);
   transition: background-color 0.15s ease;
 }
 
 .lulc-stats-table tbody tr:hover {
-  background-color: rgba(56, 189, 248, 0.04);
+  background-color: rgba(2, 132, 199, 0.04);
 }
 
 .lulc-stats-table tbody td {
-  padding: 4px 6px;
-  color: var(--text-main, #e2e8f0);
-  font-size: 12px;
+  padding: 6px 8px;
+  color: var(--text-main);
+  font-size: 11px;
   white-space: nowrap;
 }
 
 .lulc-stats-table tbody td:first-child {
   width: 16px;
   padding-right: 0;
+}
+
+/* --- Premium AI Clustering Results Layout --- */
+.aef-cluster-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 12px;
+  background: var(--bg-sidebar);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  transition: all 0.2s ease;
+}
+
+.aef-cluster-row:hover {
+  background: var(--bg-card);
+  border-color: var(--accent-sky);
+  box-shadow: var(--glow-cyan);
+}
+
+.aef-color-swatch-circle {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 1px solid rgba(15, 23, 42, 0.1);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+  flex-shrink: 0;
+}
+
+.aef-cluster-input {
+  background: transparent !important;
+  border: none !important;
+  border-bottom: 2px solid transparent !important;
+  color: var(--text-main) !important;
+  font-family: inherit !important;
+  font-size: 11.5px !important;
+  font-weight: 700 !important;
+  padding: 2px 4px !important;
+  width: 100% !important;
+  outline: none !important;
+  transition: all 0.15s ease !important;
+  box-shadow: none !important;
+  border-radius: 0 !important;
+}
+
+.aef-cluster-input:hover {
+  border-bottom-color: var(--border-color) !important;
+}
+
+.aef-cluster-input:focus {
+  border-bottom-color: var(--accent-sky) !important;
+  color: var(--accent-sky) !important;
+}
+
+.aef-cluster-pct {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--accent-sky);
+  margin-left: auto;
+  flex-shrink: 0;
 }
 

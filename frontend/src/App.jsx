@@ -2765,20 +2765,20 @@ function App() {
 
                   {/* Interactive Legend with Rename Inputs */}
                   <div className="lulc-section-title">Classify / Label Clusters</div>
-                  <div className="flex flex-col gap-2">
+                  <div className="flex flex-col gap-1.5">
                     {statsEntries.map(([classVal, info]) => {
                       const currentName = customClusterNames[classVal] || info.name;
                       return (
-                        <div key={classVal} className="flex items-center gap-2 p-1.5 bg-slate-900/30 rounded border border-slate-800/40">
-                          <span className="lulc-color-swatch-sm flex-shrink-0" style={{ backgroundColor: info.color }}></span>
+                        <div key={classVal} className="aef-cluster-row">
+                          <span className="aef-color-swatch-circle" style={{ backgroundColor: info.color }}></span>
                           <input 
                             type="text" 
                             value={currentName} 
                             onChange={e => setCustomClusterNames(prev => ({ ...prev, [classVal]: e.target.value }))}
-                            className="bg-transparent border-b border-transparent hover:border-slate-700 focus:border-cyan-500 text-[11px] text-white font-bold py-0.5 px-1 w-full focus:outline-none"
+                            className="aef-cluster-input"
                             placeholder={`Rename ${info.name}...`}
                           />
-                          <span className="text-[10px] font-mono text-cyan-400 flex-shrink-0 ml-auto font-bold">{info.percentage.toFixed(1)}%</span>
+                          <span className="aef-cluster-pct">{info.percentage.toFixed(1)}%</span>
                         </div>
                       );
                     })}
@@ -2814,18 +2814,18 @@ function App() {
                             key={idx}
                             d={seg.pathD}
                             fill={seg.info.color}
-                            stroke="#1a1f2e"
-                            strokeWidth="1"
+                            stroke="var(--bg-card)"
+                            strokeWidth="1.5"
                             style={{ cursor: 'pointer' }}
                           >
                             <title>{label}: {seg.info.percentage.toFixed(1)}%</title>
                           </path>
                         );
                       })}
-                      <text x={donutCx} y={donutCy - 4} textAnchor="middle" fill="#e2e8f0" fontSize="11" fontWeight="700">
+                      <text x={donutCx} y={donutCy - 4} textAnchor="middle" fill="var(--text-main)" fontSize="11" fontWeight="700">
                         {statsEntries.length}
                       </text>
-                      <text x={donutCx} y={donutCy + 10} textAnchor="middle" fill="#94a3b8" fontSize="8">
+                      <text x={donutCx} y={donutCy + 10} textAnchor="middle" fill="var(--text-muted)" fontSize="8">
                         Clusters
                       </text>
                     </svg>
